@@ -1,0 +1,18 @@
+name: file-size
+description: >-
+  Fail when a pull request or push adds a file over 20,000 bytes (about 5,000
+  tokens) or grows one already over. Check out with fetch-depth 0 first.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        # A pull request is checked against its base; a push, against the commit it replaced.
+        BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        CHECK: ${{ github.action_path }}/file_size.py
+      run: |
+        if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+          echo "file-size: this event has no base commit (a new branch or a manual run); nothing to compare"
+          exit 0
+        fi
+        python3 "$CHECK" check --base "$BASE"

@@ -1,0 +1,19 @@
+name: Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 -m unittest discover -s file-size -p "test_*.py"
+      - run: python3 -m unittest discover -s ci-cache -p "test_*.py"
+      - uses: ./file-size

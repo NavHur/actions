@@ -1,0 +1,32 @@
+name: ci-cache
+description: >-
+  Runner-local CI state for self-hosted runners (ci_cache.py).
+  passed-check / passed-record skip work on a tree that already passed under a
+  key; godot-restore / godot-save replace actions/cache for a Godot project's
+  import cache. Run from the checkout's root, after actions/checkout.
+inputs:
+  command:
+    description: passed-check, passed-record, godot-restore, or godot-save
+    required: true
+  key:
+    description: >-
+      The key. godot-restore takes a prefix (say godot-4.7.1) and appends the
+      assets' hash; pass its key output to godot-save.
+    required: true
+outputs:
+  hit:
+    description: '"true" when passed-check or godot-restore found an entry'
+    value: ${{ steps.run.outputs.hit }}
+  key:
+    description: godot-restore's full key
+    value: ${{ steps.run.outputs.key }}
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        CI_CACHE: ${{ github.action_path }}/ci_cache.py
+        COMMAND: ${{ inputs.command }}
+        KEY: ${{ inputs.key }}
+      run: python3 "$CI_CACHE" "$COMMAND" "$KEY"
