@@ -1,0 +1,21 @@
+{
+  "$comment": "Written by NavHur/fleet's lib/actions-copy/actions_copies.py from its binaries.json; binaries.py installs these for the complexity action.",
+  "binaries": {
+    "godot-guard": {
+      "repo": "NavHur/godot-guard",
+      "tag": "v0.7.0",
+      "sha256": {
+        "aarch64-apple-darwin": "b716c5414b983ad6cb31a55bfea77df18abf62696c8ba94bcfd108ba773509ad",
+        "x86_64-unknown-linux-gnu": "f6f633f00c23ae19979af1ec23eaca9b4866f38b7f8249b89cb7e06da98be1b1"
+      }
+    },
+    "pbp-complexity": {
+      "repo": "NavHur/actions",
+      "tag": "pbp-complexity-v0.2.0",
+      "sha256": {
+        "aarch64-apple-darwin": "977f9cccdb5a16a3a61ce7ffc5f7111f720a87a54c7c6c2c24a2fe5276ddbcc0",
+        "x86_64-unknown-linux-gnu": "63f3bf14be7aa1f5596528cc9405d62ce303a6b60bc04a321533da53d2905bdf"
+      }
+    }
+  }
+}
