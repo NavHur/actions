@@ -1,0 +1,8 @@
+{
+  "name": "pedro-best-practices",
+  "private": true,
+  "description": "oxlint for measure_complexity.py in repositories without their own",
+  "devDependencies": {
+    "oxlint": "1.87.0"
+  }
+}

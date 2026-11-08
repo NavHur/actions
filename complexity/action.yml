@@ -1,0 +1,20 @@
+name: complexity
+description: >-
+  Fail when a pull request or push leaves a changed function over Pedro's
+  complexity limits (NavHur repositories: cognitive 6, cyclomatic 18; other
+  owners: 8 and 16; a stricter repository limit wins), or changes a file it
+  cannot measure. Files that don't parse are listed but don't fail it.
+  Functions the change does not touch never fail it, so excesses already on
+  the base don't block a pull request. Runs a copy of NavHur/fleet's
+  measure_complexity.py with its pinned analyzers. Check out with
+  fetch-depth 0 first.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        # A pull request is checked against its base; a push, against the commit it replaced.
+        BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        GH_TOKEN: ${{ github.token }}
+        RUN: ${{ github.action_path }}/run.sh
+      run: bash "$RUN"
