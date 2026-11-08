@@ -159,15 +159,14 @@ def changes(comparison, root):
     """The added, modified, and renamed files; a submodule pointer is not a file."""
     raw = git("diff", "--name-status", "-z", "-M", "--diff-filter=AMR", "--ignore-submodules=all",
               *comparison.diff_args, cwd=root, env=comparison.env)
-    fields, found, i = decode(raw).split("\0"), [], 0
-    while i < len(fields) - 1:
-        status = fields[i]
+    fields = iter(decode(raw).split("\0")[:-1])
+    found = []
+    for status in fields:
+        path = next(fields)
         if status.startswith("R"):
-            found.append(Change(fields[i + 2], fields[i + 1]))
-            i += 3
-        else:
-            found.append(Change(fields[i + 1], fields[i + 1] if status == "M" else None))
-            i += 2
+            found.append(Change(next(fields), path))
+            continue
+        found.append(Change(path, path if status == "M" else None))
     return found
 
 
@@ -321,11 +320,16 @@ def report(paths, cwd):
     over = []
     for path in candidates([p for p in listed if p], False, root):
         full = os.path.join(root, path)
-        if os.path.isfile(full) and os.path.getsize(full) > LIMIT_BYTES:
-            with open(full, "rb") as f:
-                if is_authored(f.read(BINARY_SNIFF_BYTES)):
-                    over.append(Finding(path, os.path.getsize(full), None))
+        if reportable(full):
+            over.append(Finding(path, os.path.getsize(full), None))
     return sorted(over, key=lambda f: -f.size)
+
+
+def reportable(full):
+    if not os.path.isfile(full) or os.path.getsize(full) <= LIMIT_BYTES:
+        return False
+    with open(full, "rb") as f:
+        return is_authored(f.read(BINARY_SNIFF_BYTES))
 
 
 def cap_label():
