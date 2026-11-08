@@ -16,5 +16,8 @@ jobs:
           python-version: "3.12"
       - run: python3 -m unittest discover -s file-size -p "test_*.py"
       - run: python3 -m unittest discover -s ci-cache -p "test_*.py"
+      # Runs the action in a scratch repository; this repository's own diff is mostly copies of fleet code.
+      - run: python3 -m unittest discover -s complexity -p "test_*.py"
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: ./file-size
-      - uses: ./complexity
