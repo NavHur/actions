@@ -10,12 +10,26 @@ const SKIPPED_KEYS = new Set(["parent", "loc", "range", "start", "end", "type", 
 function functionName(node) {
   if (node.id?.name) return node.id.name;
   const parent = node.parent;
-  if (parent?.type === "VariableDeclarator" && parent.id.type === "Identifier") return parent.id.name;
-  if (parent?.type === "AssignmentExpression" && parent.left.type === "Identifier") return parent.left.name;
-  if (["Property", "MethodDefinition", "PropertyDefinition"].includes(parent?.type) && !parent.computed) {
-    return parent.key.name ?? String(parent.key.value ?? "<anonymous>");
+  switch (parent?.type) {
+    case "VariableDeclarator":
+      return identifierName(parent.id);
+    case "AssignmentExpression":
+      return identifierName(parent.left);
+    case "Property":
+    case "MethodDefinition":
+    case "PropertyDefinition":
+      return propertyName(parent);
   }
   return "<anonymous>";
+}
+
+function identifierName(node) {
+  return node.type === "Identifier" ? node.name : "<anonymous>";
+}
+
+function propertyName(node) {
+  if (node.computed) return "<anonymous>";
+  return node.key.name ?? String(node.key.value ?? "<anonymous>");
 }
 
 // Call forms that count as recursion for this function. A bare name inside a
@@ -41,13 +55,13 @@ function callForm(callee) {
 function* children(node) {
   for (const key of Object.keys(node)) {
     if (SKIPPED_KEYS.has(key)) continue;
-    const value = node[key];
-    if (Array.isArray(value)) {
-      for (const item of value) if (item && typeof item.type === "string") yield item;
-    } else if (value && typeof value.type === "string") {
-      yield value;
-    }
+    yield* childNodes(node[key]);
   }
+}
+
+function childNodes(value) {
+  const values = Array.isArray(value) ? value : [value];
+  return values.filter((item) => item && typeof item.type === "string");
 }
 
 // Operators of a logical chain in source order; `??` and non-logical nodes end it.
@@ -64,73 +78,117 @@ function runs(operators) {
   return operators.filter((operator, index) => operator !== operators[index - 1]).length;
 }
 
-function score(root) {
-  let total = 0;
-  const seenChains = new WeakSet();
-  const frames = [];
+const VISITORS = {
+  IfStatement: "visitIf",
+  ConditionalExpression: "visitConditional",
+  SwitchStatement: "visitSwitch",
+  CatchClause: "visitCatch",
+  LogicalExpression: "visitLogical",
+  BreakStatement: "visitJump",
+  ContinueStatement: "visitJump",
+  CallExpression: "visitCall",
+  NewExpression: "visitCall",
+};
 
-  function walk(node, nesting) {
+class CognitiveScore {
+  constructor(root) {
+    this.root = root;
+    this.total = 0;
+    this.seenChains = new WeakSet();
+    this.frames = [];
+  }
+
+  walk(node, nesting) {
     if (!node) return;
-    if (FUNCTIONS.has(node.type)) {
-      frames.push({ forms: ownCallForms(node), counted: false });
-      const depth = node === root ? nesting : nesting + 1;
-      for (const child of children(node)) walk(child, depth);
-      frames.pop();
-      return;
-    }
-    if (node.type === "IfStatement") return visitIf(node, nesting, false);
-    if (node.type === "ConditionalExpression") {
-      total += 1 + nesting;
-      walk(node.test, nesting);
-      walk(node.consequent, nesting + 1);
-      walk(node.alternate, nesting + 1);
-      return;
-    }
-    if (LOOPS.has(node.type)) {
-      total += 1 + nesting;
-      for (const child of children(node)) walk(child, child === node.body ? nesting + 1 : nesting);
-      return;
-    }
-    if (node.type === "SwitchStatement") {
-      total += 1 + nesting;
-      walk(node.discriminant, nesting);
-      for (const branch of node.cases) for (const child of children(branch)) walk(child, nesting + 1);
-      return;
-    }
-    if (node.type === "CatchClause") {
-      total += 1 + nesting;
-      walk(node.param, nesting);
-      walk(node.body, nesting + 1);
-      return;
-    }
-    if (node.type === "LogicalExpression" && node.operator !== "??" && !seenChains.has(node)) {
-      total += runs(chainOperators(node, seenChains));
-    }
-    if ((node.type === "BreakStatement" || node.type === "ContinueStatement") && node.label) total += 1;
-    if (node.type === "CallExpression" || node.type === "NewExpression") {
-      const frame = frames[frames.length - 1];
-      const form = callForm(node.callee);
-      if (frame && !frame.counted && form && frame.forms.has(form)) {
-        frame.counted = true;
-        total += 1;
-      }
-    }
-    for (const child of children(node)) walk(child, nesting);
+    if (FUNCTIONS.has(node.type)) return this.visitFunction(node, nesting);
+    if (LOOPS.has(node.type)) return this.visitLoop(node, nesting);
+    const visitor = VISITORS[node.type];
+    if (visitor) return this[visitor](node, nesting);
+    this.walkChildren(node, nesting);
   }
 
-  function visitIf(node, nesting, elseIf) {
-    total += elseIf ? 1 : 1 + nesting;
-    walk(node.test, nesting);
-    walk(node.consequent, nesting + 1);
-    if (node.alternate?.type === "IfStatement") return visitIf(node.alternate, nesting, true);
+  walkChildren(node, nesting) {
+    for (const child of children(node)) this.walk(child, nesting);
+  }
+
+  visitFunction(node, nesting) {
+    this.frames.push({ forms: ownCallForms(node), counted: false });
+    this.walkChildren(node, node === this.root ? nesting : nesting + 1);
+    this.frames.pop();
+  }
+
+  visitConditional(node, nesting) {
+    this.total += 1 + nesting;
+    this.walk(node.test, nesting);
+    this.walk(node.consequent, nesting + 1);
+    this.walk(node.alternate, nesting + 1);
+  }
+
+  visitLoop(node, nesting) {
+    this.total += 1 + nesting;
+    for (const child of children(node)) this.walk(child, child === node.body ? nesting + 1 : nesting);
+  }
+
+  visitSwitch(node, nesting) {
+    this.total += 1 + nesting;
+    this.walk(node.discriminant, nesting);
+    for (const branch of node.cases) this.walkChildren(branch, nesting + 1);
+  }
+
+  visitCatch(node, nesting) {
+    this.total += 1 + nesting;
+    this.walk(node.param, nesting);
+    this.walk(node.body, nesting + 1);
+  }
+
+  visitLogical(node, nesting) {
+    if (node.operator !== "??" && !this.seenChains.has(node)) {
+      this.total += runs(chainOperators(node, this.seenChains));
+    }
+    this.walkChildren(node, nesting);
+  }
+
+  visitJump(node, nesting) {
+    if (node.label) this.total += 1;
+    this.walkChildren(node, nesting);
+  }
+
+  visitCall(node, nesting) {
+    const frame = this.frames[this.frames.length - 1];
+    const form = callForm(node.callee);
+    if (frame && !frame.counted && form && frame.forms.has(form)) {
+      frame.counted = true;
+      this.total += 1;
+    }
+    this.walkChildren(node, nesting);
+  }
+
+  visitIf(node, nesting) {
+    this.total += 1 + nesting;
+    this.visitIfBranches(node, nesting);
+  }
+
+  // An `else if` continues its chain at the same nesting and costs one.
+  visitElseIf(node, nesting) {
+    this.total += 1;
+    this.visitIfBranches(node, nesting);
+  }
+
+  visitIfBranches(node, nesting) {
+    this.walk(node.test, nesting);
+    this.walk(node.consequent, nesting + 1);
+    if (node.alternate?.type === "IfStatement") return this.visitElseIf(node.alternate, nesting);
     if (node.alternate) {
-      total += 1;
-      walk(node.alternate, nesting + 1);
+      this.total += 1;
+      this.walk(node.alternate, nesting + 1);
     }
   }
+}
 
-  walk(root, 0);
-  return total;
+function score(root) {
+  const result = new CognitiveScore(root);
+  result.walk(root, 0);
+  return result.total;
 }
 
 function enclosedByFunction(node) {
