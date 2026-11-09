@@ -75,25 +75,38 @@ def retire(path: Path, backup: Path) -> None:
     shutil.move(str(path), destination)
 
 
+def is_occupied(link: Path) -> bool:
+    return link.exists() or link.is_symlink()
+
+
+def clear_link(link: Path, backup: Path, apply: bool) -> None:
+    if not is_occupied(link):
+        return
+    say("replace", short(link))
+    if apply:
+        retire(link, backup)
+
+
 def install(name: str, entry: dict, target: str, backup: Path, apply: bool) -> None:
     binary = STORE / name / entry["tag"] / name
     link = BIN / name
     if link.is_symlink() and link.readlink() == binary and binary.exists():
         return
-    if link.exists() or link.is_symlink():
-        say("replace", short(link))
-        if apply:
-            retire(link, backup)
+    clear_link(link, backup, apply)
     say("binary", f"{name} {entry['tag']} ({target})")
     if not apply:
         return
+    fetch_binary(name, entry, target, binary)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(binary)
+
+
+def fetch_binary(name: str, entry: dict, target: str, binary: Path) -> None:
     if not binary.exists():
         asset = f"{name}-{target}.tar.gz"
         member = entry.get("member", name).replace("{target}", target)
         with tempfile.TemporaryDirectory() as scratch:
             unpack(download(entry["repo"], entry["tag"], asset, entry["sha256"][target], Path(scratch)), member, binary)
-    link.parent.mkdir(parents=True, exist_ok=True)
-    link.symlink_to(binary)
 
 
 def main(argv: list[str]) -> int:

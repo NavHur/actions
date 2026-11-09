@@ -38,12 +38,16 @@ class Function:
             score = self.score(metric)
             if score is None:
                 continue
-            flagged = (self.lint or {}).get(metric)
-            if flagged and flagged[1] is not None:
-                limit = min(limit, flagged[1])
-            if score > limit or flagged:
-                over[metric] = limit
+            threshold = self.exceeded_limit(metric, score, limit)
+            if threshold is not None:
+                over[metric] = threshold
         return over
+
+    def exceeded_limit(self, metric: str, score: int, limit: int) -> int | None:
+        flagged = (self.lint or {}).get(metric)
+        if flagged and flagged[1] is not None:
+            limit = min(limit, flagged[1])
+        return limit if score > limit or flagged else None
 
     def over(self) -> list[str]:
         return [f"{metric} {self.score(metric)} > {limit}" for metric, limit in self.excess().items()]

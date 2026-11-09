@@ -62,7 +62,7 @@ from pathlib import Path
 import godot_guard
 from measure_js import measure_js
 from measured_function import Function, pedro_limits
-from revision import (LANGUAGES, changed_files, diff_changes, git, github_owner, language_of, materialize,
+from revision import (LANGUAGES, FileChanges, changed_files, diff_changes, git, github_owner, language_of, materialize,
                       read_file, run)
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
@@ -97,14 +97,17 @@ def repo_python_limits(root: Path, head: str | None) -> tuple[dict[str, int], li
     patterns = {"cyclomatic": r"^\s*max-complexity\s*=\s*(\d+)", "cognitive": r"^\s*max-complexity-allowed\s*=\s*(\d+)"}
     for name in ("pyproject.toml", "ruff.toml", ".ruff.toml", "setup.cfg", ".flake8", "tox.ini"):
         text = read_file(root, head, name)
-        if not text:
-            continue
-        for metric, pattern in patterns.items():
-            match = re.search(pattern, text, re.M)
-            if match and int(match.group(1)) < limits.get(metric, 10**6):
-                limits[metric] = int(match.group(1))
-                notes.append(f"{name}: repository {metric} max {match.group(1)}")
+        record_python_limits(name, text or "", patterns, limits, notes)
     return limits, notes
+
+
+def record_python_limits(name: str, text: str, patterns: dict[str, str], limits: dict[str, int],
+                         notes: list[str]) -> None:
+    for metric, pattern in patterns.items():
+        match = re.search(pattern, text, re.M)
+        if match and int(match.group(1)) < limits.get(metric, 10**6):
+            limits[metric] = int(match.group(1))
+            notes.append(f"{name}: repository {metric} max {match.group(1)}")
 
 
 def measure_external(language: str, root: Path, head: str | None, files: list[str], tree: Path,
@@ -123,6 +126,10 @@ def measure_external(language: str, root: Path, head: str | None, files: list[st
         unmeasured += files
         return []
     print(f"Analyzer: {language} -> {len(files)} file(s) with {command[0]}")
+    return external_functions(report, tree, notes, unparsed)
+
+
+def external_functions(report: dict, tree: Path, notes: list[str], unparsed: list[str]) -> list[Function]:
     functions = []
     for absolute, value in report.items():
         path = str(Path(absolute).relative_to(tree))
@@ -142,6 +149,18 @@ def measure_external(language: str, root: Path, head: str | None, files: list[st
 def effective_limits(args, pedro: dict[str, int], root: Path, head: str | None, has_python: bool,
                      notes: list[str], guard: godot_guard.Verdicts | None = None) -> dict[str, dict[str, int]]:
     """Limits per language: Pedro's, tightened by flags and repository config."""
+    base = flag_limits(args, pedro, notes)
+    limits = {language: dict(base) for language in LANGUAGES}
+    if has_python:
+        repo, repo_notes = repo_python_limits(root, head)
+        notes += repo_notes
+        for metric, value in repo.items():
+            limits["python"][metric] = min(limits["python"][metric], value)
+    tighten_for_guard(limits["gdscript"], guard, notes)
+    return limits
+
+
+def flag_limits(args: argparse.Namespace, pedro: dict[str, int], notes: list[str]) -> dict[str, int]:
     base = dict(pedro)
     for metric in base:
         value = getattr(args, f"{metric}_limit")
@@ -152,14 +171,7 @@ def effective_limits(args, pedro: dict[str, int], root: Path, head: str | None, 
             notes.append(f"--{metric}-limit {value}: stricter than Pedro's {pedro[metric]}; applied")
         else:
             notes.append(f"--{metric}-limit {value} is looser than Pedro's {pedro[metric]}; ignored")
-    limits = {language: dict(base) for language in LANGUAGES}
-    if has_python:
-        repo, repo_notes = repo_python_limits(root, head)
-        notes += repo_notes
-        for metric, value in repo.items():
-            limits["python"][metric] = min(limits["python"][metric], value)
-    tighten_for_guard(limits["gdscript"], guard, notes)
-    return limits
+    return base
 
 
 GUARD_RULES = {"cognitive": "cognitive-complexity", "cyclomatic": "cyclomatic-complexity"}
@@ -222,7 +234,7 @@ def print_result(changed: list[Function], files: list[str], by_language: dict[st
     return over
 
 
-def main() -> int:
+def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("base")
     parser.add_argument("head", nargs="?")
@@ -233,30 +245,67 @@ def main() -> int:
     parser.add_argument("--cognitive-limit", type=int)
     parser.add_argument("--cyclomatic-limit", type=int)
     parser.add_argument("--check", action="store_true", help="exit 1 when something fails the limits")
-    args = parser.parse_args()
+    return parser.parse_args()
 
+
+def main() -> int:
+    args = arguments()
     root = Path(git(Path(args.repo), "rev-parse", "--show-toplevel").strip())
-    if args.base == "EMPTY":  # whole-repository scope: diff from the empty tree
-        merge_base = git(root, "hash-object", "-t", "tree", "/dev/null").strip()
-    else:
-        merge_base = git(root, "merge-base", args.base, args.head or "HEAD").strip()
+    merge_base = comparison_base(root, args.base, args.head)
     files = changed_files(root, merge_base, args.head)
-    by_language: dict[str, list[str]] = {}
-    for path in files:
-        by_language.setdefault(language_of(path), []).append(path)
+    by_language = group_languages(files)
     notes: list[str] = []
     guard = godot_guard.check(root, args.head, by_language.get("gdscript", []), notes)
     owner = github_owner(root)
     pedro = pedro_limits(owner)
     limits = effective_limits(args, pedro, root, args.head, "python" in by_language, notes, guard)
-    print(f"Complexity of {root} {args.base}..{args.head or 'working tree'} (merge-base {merge_base[:10]})")
-    print(f"Pedro's limits for {owner or 'a repository without a GitHub origin'}: cognitive > {pedro['cognitive']}, "
-          f"cyclomatic > {pedro['cyclomatic']} (equal passes; a stricter repository limit wins)")
+    print_header(root, args, merge_base, pedro, owner)
     if not files:
         print("No changed source files.\nResult: 0 functions over threshold (nothing to measure).")
         return 0
 
-    changes = diff_changes(root, merge_base, args.head, files)
+    file_changes = diff_changes(root, merge_base, args.head, files)
+    functions, unmeasured, unparsed = measure_languages(root, args.head, by_language, limits, notes, pedro)
+    tag_with_guard(functions, guard)
+    changed_functions = [f for f in functions if is_changed(f, file_changes)]
+    shown, unchanged = selected_functions(args, functions, changed_functions)
+    print_functions(shown, unchanged)
+    print_notes(notes)
+    print("\n'-' cognitive: score 0, or counted inside the enclosing function (nested functions).")
+    over = print_result(changed_functions, files, by_language, unmeasured, unparsed)
+    return 1 if args.check and (over or unmeasured) else 0
+
+
+def comparison_base(root: Path, base: str, head: str | None) -> str:
+    if base == "EMPTY":
+        return git(root, "hash-object", "-t", "tree", "/dev/null").strip()
+    return git(root, "merge-base", base, head or "HEAD").strip()
+
+
+def group_languages(files: list[str]) -> dict[str, list[str]]:
+    by_language: dict[str, list[str]] = {}
+    for path in files:
+        by_language.setdefault(language_of(path), []).append(path)
+    return by_language
+
+
+def print_header(root: Path, args: argparse.Namespace, merge_base: str, pedro: dict[str, int],
+                 owner: str | None) -> None:
+    print(f"Complexity of {root} {args.base}..{args.head or 'working tree'} (merge-base {merge_base[:10]})")
+    print(f"Pedro's limits for {owner or 'a repository without a GitHub origin'}: cognitive > {pedro['cognitive']}, "
+          f"cyclomatic > {pedro['cyclomatic']} (equal passes; a stricter repository limit wins)")
+
+
+def print_notes(notes: list[str]) -> None:
+    if notes:
+        print("\nCoverage notes:")
+        for note in notes:
+            print(f"  {note}")
+
+
+def measure_languages(root: Path, head: str | None, by_language: dict[str, list[str]],
+                      limits: dict[str, dict[str, int]], notes: list[str],
+                      pedro: dict[str, int]) -> tuple[list[Function], list[str], list[str]]:
     functions: list[Function] = []
     unmeasured: list[str] = []
     unparsed: list[str] = []
@@ -264,47 +313,63 @@ def main() -> int:
         tree = Path(tmp)
         for language, group in sorted(by_language.items()):
             if language == "js":
-                found = measure_js(root, args.head, group, tree, notes, unmeasured, unparsed, pedro)
+                found = measure_js(root, head, group, tree, notes, unmeasured, unparsed, pedro)
             else:
-                found = measure_external(language, root, args.head, group, tree, notes, unmeasured, unparsed)
+                found = measure_external(language, root, head, group, tree, notes, unmeasured, unparsed)
             for function in found:
                 function.limits = dict(limits[language])
             functions += found
-    tag_with_guard(functions, guard)
+    return functions, unmeasured, unparsed
 
-    def is_changed(function: Function) -> bool:
-        # Deletion-only changes are excluded by policy; head coordinates cannot tell a deleted tail from a deleted neighbour.
-        return changes[function.path].adds_to(function.line, function.end_line)
 
-    changed = [f for f in functions if is_changed(f)]
-    shown = functions if args.all else changed
+def is_changed(function: Function, file_changes: dict[str, FileChanges]) -> bool:
+    # Head coordinates cannot distinguish a deleted tail from a deleted neighbour.
+    return file_changes[function.path].adds_to(function.line, function.end_line)
+
+
+def selected_functions(args: argparse.Namespace, functions: list[Function],
+                       changed_functions: list[Function]) -> tuple[list[Function], set[int]]:
+    """The functions the flags ask to list, and the `id`s of those among them that are not changed."""
+    if args.all:
+        changed_ids = {id(f) for f in changed_functions}
+        return functions, {id(f) for f in functions} - changed_ids
     if args.over_only:
-        shown = [f for f in shown if f.over()]
-    trivial = [f for f in shown if (f.cyclomatic or 0) <= 1 and not f.cognitive and not f.over()]
-    shown = [f for f in shown if f not in trivial]
-    print()
-    current = None
-    for function in sorted(shown, key=lambda f: (f.path, f.line)):
-        if function.path != current:
-            current = function.path
-            print(current)
-        cognitive = "-" if function.cognitive is None else str(function.cognitive)
-        cyclomatic = "-" if function.cyclomatic is None else str(function.cyclomatic)
-        flag = "  OVER: " + "; ".join(function.over()) + function.lint_tag() if function.over() else ""
-        mark = "" if not args.all or is_changed(function) else " (unchanged)"
-        print(f"  L{function.line}-{function.end_line} {function.name}{mark}: "
-              f"cognitive {cognitive}, cyclomatic {cyclomatic}{flag}")
-    if not shown:
+        return [f for f in changed_functions if f.over()], set()
+    return changed_functions, set()
+
+
+def print_functions(shown: list[Function], unchanged: set[int]) -> None:
+    trivial, listed = [], []
+    for function in shown:
+        (trivial if is_trivial(function) else listed).append(function)
+    print_rows(listed, unchanged)
+    if not listed:
         print("(no functions to list)")
     if trivial:
         print(f"({len(trivial)} trivial functions with cyclomatic 1 and cognitive 0 not listed)")
-    if notes:
-        print("\nCoverage notes:")
-        for note in notes:
-            print(f"  {note}")
-    print("\n'-' cognitive: score 0, or counted inside the enclosing function (nested functions).")
-    over = print_result(changed, files, by_language, unmeasured, unparsed)
-    return 1 if args.check and (over or unmeasured) else 0
+
+
+def is_trivial(function: Function) -> bool:
+    return (function.cyclomatic or 0) <= 1 and not function.cognitive and not function.over()
+
+
+def print_rows(listed: list[Function], unchanged: set[int]) -> None:
+    print()
+    current = None
+    for function in sorted(listed, key=lambda f: (f.path, f.line)):
+        if function.path != current:
+            current = function.path
+            print(current)
+        print_function(function, id(function) in unchanged)
+
+
+def print_function(function: Function, unchanged: bool) -> None:
+    cognitive = "-" if function.cognitive is None else str(function.cognitive)
+    cyclomatic = "-" if function.cyclomatic is None else str(function.cyclomatic)
+    flag = "  OVER: " + "; ".join(function.over()) + function.lint_tag() if function.over() else ""
+    mark = " (unchanged)" if unchanged else ""
+    print(f"  L{function.line}-{function.end_line} {function.name}{mark}: "
+          f"cognitive {cognitive}, cyclomatic {cyclomatic}{flag}")
 
 
 if __name__ == "__main__":
