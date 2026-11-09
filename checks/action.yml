@@ -1,0 +1,17 @@
+name: checks
+description: >-
+  Run the file-size and complexity checks in one job, so a repository bills
+  one runner minute per push instead of two. Both checks run even when the
+  first fails, each failure is annotated with its check's name, and the job
+  fails when either does. Check out with fetch-depth 0 first. The complexity
+  analyzers have Linux builds for x86_64 only, so run it on an x64 runner.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        # A pull request is checked against its base; a push, against the commit it replaced.
+        BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        GH_TOKEN: ${{ github.token }}
+        RUN: ${{ github.action_path }}/run.sh
+      run: bash "$RUN"

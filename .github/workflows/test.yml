@@ -20,4 +20,8 @@ jobs:
       - run: python3 -m unittest discover -s complexity -p "test_*.py"
         env:
           GH_TOKEN: ${{ github.token }}
+      # Both checks in one run: the second still runs when the first fails, and either failure fails it.
+      - run: python3 -m unittest discover -s checks -p "test_*.py"
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: ./file-size
