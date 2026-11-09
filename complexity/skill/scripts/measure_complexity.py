@@ -62,7 +62,7 @@ from pathlib import Path
 import godot_guard
 from measure_js import measure_js
 from measured_function import Function, pedro_limits
-from revision import (LANGUAGES, changed_files, diff_changes, git, github_owner, language_of, materialize,
+from revision import (LANGUAGES, FileChanges, changed_files, diff_changes, git, github_owner, language_of, materialize,
                       read_file, run)
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
@@ -101,7 +101,8 @@ def repo_python_limits(root: Path, head: str | None) -> tuple[dict[str, int], li
     return limits, notes
 
 
-def record_python_limits(name, text, patterns, limits, notes) -> None:
+def record_python_limits(name: str, text: str, patterns: dict[str, str], limits: dict[str, int],
+                         notes: list[str]) -> None:
     for metric, pattern in patterns.items():
         match = re.search(pattern, text, re.M)
         if match and int(match.group(1)) < limits.get(metric, 10**6):
@@ -159,7 +160,7 @@ def effective_limits(args, pedro: dict[str, int], root: Path, head: str | None, 
     return limits
 
 
-def flag_limits(args, pedro: dict[str, int], notes: list[str]) -> dict[str, int]:
+def flag_limits(args: argparse.Namespace, pedro: dict[str, int], notes: list[str]) -> dict[str, int]:
     base = dict(pedro)
     for metric in base:
         value = getattr(args, f"{metric}_limit")
@@ -233,7 +234,7 @@ def print_result(changed: list[Function], files: list[str], by_language: dict[st
     return over
 
 
-def arguments():
+def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("base")
     parser.add_argument("head", nargs="?")
@@ -263,14 +264,15 @@ def main() -> int:
         print("No changed source files.\nResult: 0 functions over threshold (nothing to measure).")
         return 0
 
-    changes = diff_changes(root, merge_base, args.head, files)
+    file_changes = diff_changes(root, merge_base, args.head, files)
     functions, unmeasured, unparsed = measure_languages(root, args.head, by_language, limits, notes, pedro)
     tag_with_guard(functions, guard)
-    changed = [f for f in functions if is_changed(f, changes)]
-    print_functions(functions, changed, changes, args.all, args.over_only)
+    changed_functions = [f for f in functions if is_changed(f, file_changes)]
+    shown, unchanged = selected_functions(args, functions, changed_functions)
+    print_functions(shown, unchanged)
     print_notes(notes)
     print("\n'-' cognitive: score 0, or counted inside the enclosing function (nested functions).")
-    over = print_result(changed, files, by_language, unmeasured, unparsed)
+    over = print_result(changed_functions, files, by_language, unmeasured, unparsed)
     return 1 if args.check and (over or unmeasured) else 0
 
 
@@ -287,7 +289,8 @@ def group_languages(files: list[str]) -> dict[str, list[str]]:
     return by_language
 
 
-def print_header(root, args, merge_base, pedro, owner) -> None:
+def print_header(root: Path, args: argparse.Namespace, merge_base: str, pedro: dict[str, int],
+                 owner: str | None) -> None:
     print(f"Complexity of {root} {args.base}..{args.head or 'working tree'} (merge-base {merge_base[:10]})")
     print(f"Pedro's limits for {owner or 'a repository without a GitHub origin'}: cognitive > {pedro['cognitive']}, "
           f"cyclomatic > {pedro['cyclomatic']} (equal passes; a stricter repository limit wins)")
@@ -300,7 +303,9 @@ def print_notes(notes: list[str]) -> None:
             print(f"  {note}")
 
 
-def measure_languages(root, head, by_language, limits, notes, pedro):
+def measure_languages(root: Path, head: str | None, by_language: dict[str, list[str]],
+                      limits: dict[str, dict[str, int]], notes: list[str],
+                      pedro: dict[str, int]) -> tuple[list[Function], list[str], list[str]]:
     functions: list[Function] = []
     unmeasured: list[str] = []
     unparsed: list[str] = []
@@ -317,15 +322,28 @@ def measure_languages(root, head, by_language, limits, notes, pedro):
     return functions, unmeasured, unparsed
 
 
-def is_changed(function: Function, changes) -> bool:
+def is_changed(function: Function, file_changes: dict[str, FileChanges]) -> bool:
     # Head coordinates cannot distinguish a deleted tail from a deleted neighbour.
-    return changes[function.path].adds_to(function.line, function.end_line)
+    return file_changes[function.path].adds_to(function.line, function.end_line)
 
 
-def print_functions(functions, changed, changes, show_all: bool, over_only: bool) -> None:
-    shown, trivial = listed_functions(functions, changed, show_all, over_only)
-    print_rows(shown, changes, show_all)
-    if not shown:
+def selected_functions(args: argparse.Namespace, functions: list[Function],
+                       changed_functions: list[Function]) -> tuple[list[Function], set[int]]:
+    """The functions the flags ask to list, and the `id`s of those among them that are not changed."""
+    if args.all:
+        changed_ids = {id(f) for f in changed_functions}
+        return functions, {id(f) for f in functions} - changed_ids
+    if args.over_only:
+        return [f for f in changed_functions if f.over()], set()
+    return changed_functions, set()
+
+
+def print_functions(shown: list[Function], unchanged: set[int]) -> None:
+    trivial, listed = [], []
+    for function in shown:
+        (trivial if is_trivial(function) else listed).append(function)
+    print_rows(listed, unchanged)
+    if not listed:
         print("(no functions to list)")
     if trivial:
         print(f"({len(trivial)} trivial functions with cyclomatic 1 and cognitive 0 not listed)")
@@ -335,23 +353,14 @@ def is_trivial(function: Function) -> bool:
     return (function.cyclomatic or 0) <= 1 and not function.cognitive and not function.over()
 
 
-def listed_functions(functions, changed, show_all: bool, over_only: bool):
-    shown = functions if show_all else changed
-    if over_only:
-        shown = [f for f in shown if f.over()]
-    trivial = [f for f in shown if is_trivial(f)]
-    shown = [f for f in shown if f not in trivial]
-    return shown, trivial
-
-
-def print_rows(shown, changes, show_all: bool) -> None:
+def print_rows(listed: list[Function], unchanged: set[int]) -> None:
     print()
     current = None
-    for function in sorted(shown, key=lambda f: (f.path, f.line)):
+    for function in sorted(listed, key=lambda f: (f.path, f.line)):
         if function.path != current:
             current = function.path
             print(current)
-        print_function(function, show_all and not is_changed(function, changes))
+        print_function(function, id(function) in unchanged)
 
 
 def print_function(function: Function, unchanged: bool) -> None:

@@ -52,14 +52,19 @@ def jsonc_token(text: str, start: int) -> tuple[str, int]:
 def quoted_end(text: str, start: int) -> int:
     i = start + 1
     while i < len(text):
-        if text[i] == "\\":
-            text[i + 1]  # Preserve the error on a dangling escape.
-            i += 2
-            continue
         if text[i] == '"':
             return i + 1
-        i += 1
+        i += character_width(text, i)
     return i
+
+
+def character_width(text: str, i: int) -> int:
+    """Characters taken by the one at `i`: an escape takes the next too; a dangling one is an error."""
+    if text[i] != "\\":
+        return 1
+    if i + 1 >= len(text):
+        raise IndexError("string index out of range")
+    return 2
 
 
 def is_complexity_rule(name: str) -> bool:
@@ -118,7 +123,7 @@ def measure_config(config: dict, limits: dict[str, int]) -> tuple[dict, dict | N
     notes += rule_notes(lint_top, limits, "top-level", "there")
     overrides, lint_overrides = override_configs(config.get("overrides", []), limits, notes)
     names = set(top) | {name for o in overrides for name in o["rules"]}
-    plugins = default_rules(top, names, notes)
+    plugins = add_default_rules(top, names, notes)
     if "extends" in config:
         notes.append("config uses `extends`; complexity rules defined in extended files were not copied")
     repo_plugins, plugin_paths = configured_plugins(config.get("jsPlugins", []), names)
@@ -156,7 +161,8 @@ def override_configs(configs: list[dict], limits: dict[str, int], notes: list[st
     return overrides, lint_overrides
 
 
-def default_rules(top: dict, names: set[str], notes: list[str]) -> list:
+def add_default_rules(top: dict, names: set[str], notes: list[str]) -> list:
+    """Add the default complexity rules `names` lacks to `top`; return the plugin specifiers to load."""
     plugins = []
     if not any(name == "complexity" or name == "eslint/complexity" for name in names):
         top["complexity"] = ["warn", {"max": 0, "variant": "classic"}]
@@ -230,7 +236,7 @@ def collect(diagnostics: list[dict], tree: Path) -> dict[tuple[str, int, int], F
     return functions
 
 
-def scored_span(diagnostic: dict, tree: Path):
+def scored_span(diagnostic: dict, tree: Path) -> tuple[str, dict, re.Match[str], str] | None:
     message = diagnostic.get("message", "")
     score, name, labels = SCORE.search(message), NAME.search(message), diagnostic.get("labels") or []
     if not score or not labels:
@@ -240,7 +246,7 @@ def scored_span(diagnostic: dict, tree: Path):
     return path, labels[0]["span"], score, name.group(1) if name else "<anonymous>"
 
 
-def apply_diagnostic(function: Function, diagnostic: dict, score) -> None:
+def apply_diagnostic(function: Function, diagnostic: dict, score: re.Match[str]) -> None:
     code = diagnostic.get("code", "")
     metric = diagnostic_metric(code)
     if metric is None:
@@ -303,7 +309,9 @@ def link_node_modules(root: Path, tree: Path, config_dir: str) -> None:
             (tree / directory / "node_modules").symlink_to(root / directory / "node_modules")
 
 
-def measure_group(root, head, config_path, group, tree, notes, unmeasured, unparsed, limits) -> list[Function]:
+def measure_group(root: Path, head: str | None, config_path: str | None, group: list[str], tree: Path,
+                  notes: list[str], unmeasured: list[str], unparsed: list[str],
+                  limits: dict[str, int]) -> list[Function]:
     config_dir, config, label = group_config(root, head, config_path)
     measured, enforced, plugin_paths, config_notes = measure_config(config, limits)
     notes += [f"{label}: {note}" for note in config_notes]
@@ -329,7 +337,8 @@ def measure_group(root, head, config_path, group, tree, notes, unmeasured, unpar
     return list(found.values())
 
 
-def tag_with_oxlint(found, enforced, root, oxlint, temp_config, tree) -> None:
+def tag_with_oxlint(found: dict[tuple[str, int, int], Function], enforced: dict | None, root: Path,
+                    oxlint: Path, temp_config: Path, tree: Path) -> None:
     for function in found.values():
         function.lint = None
     if enforced is None:
@@ -341,7 +350,8 @@ def tag_with_oxlint(found, enforced, root, oxlint, temp_config, tree) -> None:
         function.lint = real[key].lint if key in real else {}
 
 
-def note_unscored(group, found, label, notes) -> None:
+def note_unscored(group: list[str], found: dict[tuple[str, int, int], Function], label: str,
+                  notes: list[str]) -> None:
     scored_paths = {f.path for f in found.values()}
     unscored = [path for path in group if path not in scored_paths]
     if unscored:
