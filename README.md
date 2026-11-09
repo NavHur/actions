@@ -25,6 +25,26 @@ Composite GitHub Actions shared by NavHur's repositories.
   - uses: NavHur/actions/complexity@main
   ```
 
+- `checks`: `file-size` and `complexity` in one job, so a repository bills
+  one rounded-up runner minute per push instead of two. Both checks run even
+  when the first fails, each failure gets an annotation titled with its
+  check's name, and the job fails when either check did. The complexity
+  analyzers have Linux builds for x86_64 only, so keep this job on an x64
+  runner. It replaces a repository's separate `file-size` and `complexity`
+  jobs; rename any required status checks to the new job when you switch.
+
+  ```yaml
+  jobs:
+    checks:
+      name: File size and complexity
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+          with:
+            fetch-depth: 0
+        - uses: NavHur/actions/checks@main
+  ```
+
 - `ci-cache`: runner-local CI state for self-hosted runners. Inputs `command`
   (`passed-check`, `passed-record`, `godot-restore`, `godot-save`) and `key`.
 
