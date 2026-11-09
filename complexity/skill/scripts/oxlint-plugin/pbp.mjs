@@ -163,11 +163,21 @@ class CognitiveScore {
     this.walkChildren(node, nesting);
   }
 
-  visitIf(node, nesting, elseIf = false) {
-    this.total += elseIf ? 1 : 1 + nesting;
+  visitIf(node, nesting) {
+    this.total += 1 + nesting;
+    this.visitIfBranches(node, nesting);
+  }
+
+  // An `else if` continues its chain at the same nesting and costs one.
+  visitElseIf(node, nesting) {
+    this.total += 1;
+    this.visitIfBranches(node, nesting);
+  }
+
+  visitIfBranches(node, nesting) {
     this.walk(node.test, nesting);
     this.walk(node.consequent, nesting + 1);
-    if (node.alternate?.type === "IfStatement") return this.visitIf(node.alternate, nesting, true);
+    if (node.alternate?.type === "IfStatement") return this.visitElseIf(node.alternate, nesting);
     if (node.alternate) {
       this.total += 1;
       this.walk(node.alternate, nesting + 1);
