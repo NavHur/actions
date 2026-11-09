@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# The checks action's body: the file-size and complexity actions' bodies in one job, so a repository
-# pays one rounded-up runner minute per push for both. Each check runs even when the other fails, and
-# each failure gets its own annotation; the job fails when either check did.
+# Runs both checks' bodies so one job reports each failure; either failure fails the job.
 set -uo pipefail
+
+if [ -z "${BASE:-}" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+  echo "checks: this event has no base commit (a new branch or a manual run); nothing to compare"
+  exit 0
+fi
 
 actions="$(cd "$(dirname "$0")/.." && pwd)"
 failed=""

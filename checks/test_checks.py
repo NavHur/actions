@@ -48,8 +48,8 @@ class Action(unittest.TestCase):
         self.git("add", "-A")
         self.git("commit", "-qm", "change")
 
-    def run_action(self) -> subprocess.CompletedProcess:
-        env = {**os.environ, "BASE": self.base, "RUNNER_TEMP": str(self.scratch / "runner")}
+    def run_action(self, base: str | None = None) -> subprocess.CompletedProcess:
+        env = {**os.environ, "BASE": base or self.base, "RUNNER_TEMP": str(self.scratch / "runner")}
         return subprocess.run(["bash", str(RUN)], cwd=self.repo, env=env, capture_output=True, text=True)
 
     def test_a_change_within_both_limits_passes(self):
@@ -71,8 +71,15 @@ class Action(unittest.TestCase):
         result = self.run_action()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("::error title=file-size::", result.stdout)
+        self.assertIn("::error title=complexity::", result.stdout)
         self.assertIn("nested: cognitive 10 > 6", result.stdout)
         self.assertIn("checks: failed: file-size complexity", result.stdout)
+
+    def test_an_event_without_a_base_commit_compares_nothing(self):
+        result = self.run_action(base="0" * 40)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("nothing to compare", result.stdout)
+        self.assertNotIn("passed", result.stdout)
 
 
 if __name__ == "__main__":
