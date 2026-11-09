@@ -9,10 +9,5 @@ runs:
       env:
         # A pull request is checked against its base; a push, against the commit it replaced.
         BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        CHECK: ${{ github.action_path }}/file_size.py
-      run: |
-        if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
-          echo "file-size: this event has no base commit (a new branch or a manual run); nothing to compare"
-          exit 0
-        fi
-        python3 "$CHECK" check --base "$BASE"
+        RUN: ${{ github.action_path }}/run.sh
+      run: bash "$RUN"
