@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import io
 import json
 import platform
@@ -19,11 +20,15 @@ import re
 import shutil
 import sys
 import tarfile
+import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REGISTRY = "https://registry.npmjs.org"
+FETCH_ATTEMPTS = 3  # pnpm retried failed fetches too
+RETRY_BACKOFF_SECONDS = 1  # doubles after each failed attempt
 # The targets binaries.py installs the rest of the action's analyzers for; pnpm would pick the same bindings.
 BINDINGS = {("Linux", "x86_64"): "@oxlint/binding-linux-x64-gnu", ("Darwin", "arm64"): "@oxlint/binding-darwin-arm64"}
 
@@ -41,9 +46,31 @@ def tarball_url(package: str, version: str) -> str:
     return f"{REGISTRY}/{package}/-/{package.split('/')[-1]}-{version}.tgz"
 
 
+def download_once(package: str, version: str) -> bytes:
+    """One download attempt; a 4xx is the caller's mistake, so it exits here instead of being retried."""
+    try:
+        with urllib.request.urlopen(tarball_url(package, version), timeout=60) as response:
+            return response.read()
+    except urllib.error.HTTPError as error:
+        if error.code < 500:
+            sys.exit(f"oxlint.py: could not download {package}@{version}: {error}")
+        raise
+
+
+def download(package: str, version: str) -> bytes:
+    """Retry network failures and HTTP 5xx, as pnpm did; an IncompleteRead is an HTTPException, not an OSError."""
+    for attempt in range(1, FETCH_ATTEMPTS + 1):
+        try:
+            return download_once(package, version)
+        except (OSError, http.client.HTTPException) as error:
+            last_error = error
+        if attempt < FETCH_ATTEMPTS:
+            time.sleep(RETRY_BACKOFF_SECONDS * 2 ** (attempt - 1))
+    sys.exit(f"oxlint.py: could not download {package}@{version}: {last_error}")
+
+
 def fetch(package: str, version: str, expected: str) -> bytes:
-    with urllib.request.urlopen(tarball_url(package, version), timeout=60) as response:
-        data = response.read()
+    data = download(package, version)
     actual = base64.b64encode(hashlib.sha512(data).digest()).decode()
     if actual != expected:
         sys.exit(f"oxlint.py: {package}@{version} has sha512-{actual}, but pnpm-lock.yaml pins sha512-{expected}")

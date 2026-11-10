@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import io
 import json
 import tarfile
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -137,6 +139,55 @@ class Install(unittest.TestCase):
             oxlint.main(self.skill)
         self.assertIn(f"oxlint@{VERSION} has sha512-{sha512(b'tampered')}", str(refused.exception))
         self.assertFalse((self.skill / "node_modules").exists())
+
+    def flaky_urlopen(self, failures: list):
+        """Raise each failure in turn for oxlint's tarball, then serve; self.calls counts requests for it."""
+        served = fake_urlopen(self.served)
+        pending = list(failures)
+        self.calls = 0
+
+        def urlopen(url, timeout):
+            if url == oxlint.tarball_url("oxlint", VERSION):
+                self.calls += 1
+                if pending:
+                    raise pending.pop(0)
+            return served(url, timeout)
+        return urlopen
+
+    def install_with(self, failures: list):
+        urlopen = self.flaky_urlopen(failures)
+        with mock.patch("oxlint.urllib.request.urlopen", new=urlopen), \
+                mock.patch("oxlint.time.sleep") as sleep:
+            oxlint.main(self.skill)
+        return sleep
+
+    def http_error(self, code: int):
+        return urllib.error.HTTPError(oxlint.tarball_url("oxlint", VERSION), code, "status", None, None)
+
+    def test_retries_a_transient_failure(self):
+        for failure in [urllib.error.URLError("reset"), self.http_error(503), TimeoutError("slow"),
+                        http.client.IncompleteRead(b"par")]:
+            with self.subTest(failure=type(failure).__name__):
+                self.install_with([failure])
+                self.assertEqual(self.calls, 2)
+                self.assertTrue((self.skill / "node_modules" / "oxlint" / "bin" / "oxlint").is_file())
+
+    def test_gives_up_after_three_attempts(self):
+        with self.assertRaises(SystemExit) as refused:
+            self.install_with([urllib.error.URLError("down")] * 3)
+        self.assertIn(f"could not download oxlint@{VERSION}", str(refused.exception))
+        self.assertIn("down", str(refused.exception))
+        self.assertEqual(self.calls, 3)
+        self.assertFalse((self.skill / "node_modules").exists())
+
+    def test_does_not_retry_a_404(self):
+        with mock.patch("oxlint.time.sleep") as sleep, self.assertRaises(SystemExit) as refused:
+            urlopen = self.flaky_urlopen([self.http_error(404)])
+            with mock.patch("oxlint.urllib.request.urlopen", new=urlopen):
+                oxlint.main(self.skill)
+        self.assertEqual(self.calls, 1)
+        self.assertIn(f"could not download oxlint@{VERSION}", str(refused.exception))
+        sleep.assert_not_called()
 
     def test_refuses_an_unsupported_platform(self):
         with mock.patch("oxlint.platform.system", return_value="Windows"):
