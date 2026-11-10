@@ -88,6 +88,20 @@ class Install(unittest.TestCase):
         self.assertEqual(link.resolve(), (self.skill / "node_modules" / "oxlint" / "bin" / "oxlint").resolve())
         self.assertFalse(stale.exists())
 
+    def test_it_replaces_a_pnpm_install_without_touching_its_store(self):
+        modules = self.skill / "node_modules"
+        store = modules / ".pnpm" / f"oxlint@{VERSION}" / "node_modules" / "oxlint"
+        (store / "bin").mkdir(parents=True)
+        (store / "bin" / "oxlint").write_text("from the pnpm store")
+        (modules / "oxlint").symlink_to(store.relative_to(modules), target_is_directory=True)
+        (modules / ".bin").mkdir()
+        (modules / ".bin" / "oxlint").write_text("#!/bin/sh\n# pnpm's shim\n")
+        oxlint.main(self.skill)
+        self.assertFalse((modules / "oxlint").is_symlink())
+        self.assertEqual((modules / "oxlint" / "bin" / "oxlint").read_bytes(), b"#!/usr/bin/env node\n")
+        self.assertEqual((store / "bin" / "oxlint").read_text(), "from the pnpm store")
+        self.assertTrue((modules / ".bin" / "oxlint").is_symlink())
+
     def test_a_failed_fetch_leaves_the_prior_install_alone(self):
         oxlint.main(self.skill)
         self.served[oxlint.tarball_url(BINDING, VERSION)] = b"tampered"

@@ -50,6 +50,14 @@ def fetch(package: str, version: str, expected: str) -> bytes:
     return data
 
 
+def retire(path: Path) -> None:
+    """Remove what an earlier install left at path: a real directory, or the symlink pnpm makes into its store."""
+    if path.is_symlink():
+        path.unlink()
+    elif path.exists():
+        shutil.rmtree(path)
+
+
 def unpack(data: bytes, into: Path) -> None:
     """npm tarballs hold one top-level `package/` directory; its contents become `into`.
 
@@ -59,7 +67,7 @@ def unpack(data: bytes, into: Path) -> None:
         members = [m for m in archive.getmembers() if m.name.startswith("package/")]
         for member in members:
             member.name = member.name.removeprefix("package/")
-        shutil.rmtree(into, ignore_errors=True)  # a rerun replaces what an earlier install or pnpm left
+        retire(into)
         into.mkdir(parents=True)
         archive.extractall(into, members=members)
 
