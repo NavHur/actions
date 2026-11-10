@@ -23,7 +23,7 @@ export PBP_GODOT_GUARD="$scratch/home/.local/bin/godot-guard"
 skill="$scratch/skill"
 cp -R "$here/skill" "$skill"
 if git diff --name-only "$BASE" HEAD | grep -qE '\.(js|jsx|ts|tsx|mjs|cjs|mts|cts|svelte|vue|astro)$'; then
-  (cd "$skill" && npx --yes pnpm@10 install --frozen-lockfile --silent)
+  python3 "$here/oxlint.py" "$skill"
 fi
 
 # host-check queues local validation on Pedro's hosts; a CI job is already scheduled by its runner.

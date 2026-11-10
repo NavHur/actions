@@ -22,6 +22,18 @@ def nested(a, b, c):
     return 0
 """  # cognitive 6: 1 + 2 + 3
 OVER_THE_LIMIT = AT_THE_LIMIT.replace("return 1", "return 1 if c else 2")  # cognitive 10
+JS_OVER_THE_LIMIT = """\
+export function nested(a, b, c) {
+  if (a) {
+    if (b) {
+      if (c) {
+        return a && b ? 1 : 2;
+      }
+    }
+  }
+  return 0;
+}
+"""  # cognitive 11: 1 + 2 + 3 for the ifs, 4 for the ternary, 1 for &&
 
 
 class Action(unittest.TestCase):
@@ -61,6 +73,13 @@ class Action(unittest.TestCase):
         result = self.run_action()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("nested: cognitive 10 > 6", result.stdout)
+
+    def test_a_js_function_over_the_limit_fails_through_the_installed_oxlint(self):
+        self.commit("over.js", JS_OVER_THE_LIMIT)
+        result = self.run_action()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("nested: cognitive 11, cyclomatic 6", result.stdout)
+        self.assertIn("measured with fleet's pbp plugin", result.stdout)
 
     def test_no_base_commit_skips(self):
         self.base = "0" * 40
