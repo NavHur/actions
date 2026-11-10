@@ -16,6 +16,7 @@ import io
 import json
 import platform
 import re
+import shutil
 import sys
 import tarfile
 import urllib.request
@@ -58,6 +59,7 @@ def unpack(data: bytes, into: Path) -> None:
         members = [m for m in archive.getmembers() if m.name.startswith("package/")]
         for member in members:
             member.name = member.name.removeprefix("package/")
+        shutil.rmtree(into, ignore_errors=True)  # a rerun replaces what an earlier install or pnpm left
         into.mkdir(parents=True)
         archive.extractall(into, members=members)
 
@@ -74,8 +76,10 @@ def main(skill: Path) -> None:
     modules = skill / "node_modules"
     for package, data in zip(packages, tarballs):
         unpack(data, modules / package)
-    (modules / ".bin").mkdir()
-    (modules / ".bin" / "oxlint").symlink_to("../oxlint/bin/oxlint")
+    link = modules / ".bin" / "oxlint"
+    link.parent.mkdir(exist_ok=True)
+    link.unlink(missing_ok=True)
+    link.symlink_to("../oxlint/bin/oxlint")
 
 
 if __name__ == "__main__":
