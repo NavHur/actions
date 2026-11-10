@@ -51,7 +51,7 @@ def fetch(package: str, version: str, expected: str) -> bytes:
 
 
 def retire(path: Path) -> None:
-    """Remove what an earlier install left at path: a real directory, or the symlink pnpm makes into its store."""
+    """Remove path without following it: a symlink to a shared install goes, its target stays."""
     if path.is_symlink():
         path.unlink()
     elif path.exists():
@@ -67,7 +67,6 @@ def unpack(data: bytes, into: Path) -> None:
         members = [m for m in archive.getmembers() if m.name.startswith("package/")]
         for member in members:
             member.name = member.name.removeprefix("package/")
-        retire(into)
         into.mkdir(parents=True)
         archive.extractall(into, members=members)
 
@@ -82,12 +81,11 @@ def main(skill: Path) -> None:
     with ThreadPoolExecutor(len(packages)) as pool:
         tarballs = list(pool.map(lambda p: fetch(p, version, integrity(lockfile, p, version)), packages))
     modules = skill / "node_modules"
+    retire(modules)  # whatever an earlier install, or a pnpm install in the copied skill, left
     for package, data in zip(packages, tarballs):
         unpack(data, modules / package)
-    link = modules / ".bin" / "oxlint"
-    link.parent.mkdir(exist_ok=True)
-    link.unlink(missing_ok=True)
-    link.symlink_to("../oxlint/bin/oxlint")
+    (modules / ".bin").mkdir()
+    (modules / ".bin" / "oxlint").symlink_to("../oxlint/bin/oxlint")
 
 
 if __name__ == "__main__":

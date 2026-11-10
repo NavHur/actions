@@ -88,19 +88,33 @@ class Install(unittest.TestCase):
         self.assertEqual(link.resolve(), (self.skill / "node_modules" / "oxlint" / "bin" / "oxlint").resolve())
         self.assertFalse(stale.exists())
 
-    def test_it_replaces_a_pnpm_install_without_touching_its_store(self):
-        modules = self.skill / "node_modules"
+    def pnpm_install(self, modules: Path):
+        """pnpm's layout: node_modules/oxlint is a symlink into .pnpm, and .bin/oxlint a plain shim."""
         store = modules / ".pnpm" / f"oxlint@{VERSION}" / "node_modules" / "oxlint"
         (store / "bin").mkdir(parents=True)
         (store / "bin" / "oxlint").write_text("from the pnpm store")
         (modules / "oxlint").symlink_to(store.relative_to(modules), target_is_directory=True)
         (modules / ".bin").mkdir()
         (modules / ".bin" / "oxlint").write_text("#!/bin/sh\n# pnpm's shim\n")
+
+    def test_it_replaces_a_pnpm_install(self):
+        modules = self.skill / "node_modules"
+        self.pnpm_install(modules)
         oxlint.main(self.skill)
         self.assertFalse((modules / "oxlint").is_symlink())
         self.assertEqual((modules / "oxlint" / "bin" / "oxlint").read_bytes(), b"#!/usr/bin/env node\n")
-        self.assertEqual((store / "bin" / "oxlint").read_text(), "from the pnpm store")
         self.assertTrue((modules / ".bin" / "oxlint").is_symlink())
+
+    def test_a_node_modules_symlinked_to_a_shared_install_leaves_that_install_alone(self):
+        shared = tempfile.TemporaryDirectory()
+        self.addCleanup(shared.cleanup)
+        self.pnpm_install(Path(shared.name))
+        (self.skill / "node_modules").symlink_to(shared.name, target_is_directory=True)
+        oxlint.main(self.skill)
+        self.assertFalse((self.skill / "node_modules").is_symlink())
+        self.assertTrue((self.skill / "node_modules" / "oxlint" / "bin" / "oxlint").is_file())
+        self.assertTrue((Path(shared.name) / "oxlint").is_symlink())
+        self.assertEqual((Path(shared.name) / ".bin" / "oxlint").read_text(), "#!/bin/sh\n# pnpm's shim\n")
 
     def test_a_failed_fetch_leaves_the_prior_install_alone(self):
         oxlint.main(self.skill)
