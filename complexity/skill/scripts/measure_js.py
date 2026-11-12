@@ -8,7 +8,7 @@ import re
 import sys
 from pathlib import Path, PurePosixPath
 
-from measured_function import Function
+from measured_function import Function, Measurement
 from revision import git, materialize, read_file, run
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
@@ -265,25 +265,24 @@ def diagnostic_metric(code: str) -> str | None:
     return None
 
 
-def note_parse_failures(diagnostics: list[dict], tree: Path, label: str, notes: list[str],
-                        unparsed: list[str]) -> None:
+def note_parse_failures(diagnostics: list[dict], tree: Path, label: str, into: Measurement) -> None:
     """A file oxlint cannot parse gets a codeless error diagnostic; it was not measured."""
     failed = sorted({str(Path(d["filename"]).relative_to(tree)) if Path(d["filename"]).is_absolute()
                      else d["filename"] for d in diagnostics if d.get("severity") == "error" and not d.get("code")})
     if failed:
-        notes.append(f"{label}: oxlint could not parse {', '.join(failed)}; not measured")
-        unparsed += failed
+        into.notes.append(f"{label}: oxlint could not parse {', '.join(failed)}; not measured")
+        into.unparsed += failed
 
 
-def measure_js(root: Path, head: str | None, files: list[str], tree: Path, notes: list[str],
-               unmeasured: list[str], unparsed: list[str], limits: dict[str, int]) -> list[Function]:
+def measure_js(root: Path, head: str | None, files: list[str], tree: Path, into: Measurement,
+               limits: dict[str, int]) -> list[Function]:
     configs = repository_configs(root, head)
     groups: dict[str | None, list[str]] = {}
     for path in files:
         groups.setdefault(owning_config(path, configs), []).append(path)
     functions: list[Function] = []
     for config_path, group in groups.items():
-        functions += measure_group(root, head, config_path, group, tree, notes, unmeasured, unparsed, limits)
+        functions += measure_group(root, head, config_path, group, tree, into, limits)
     return functions
 
 
@@ -310,19 +309,18 @@ def link_node_modules(root: Path, tree: Path, config_dir: str) -> None:
 
 
 def measure_group(root: Path, head: str | None, config_path: str | None, group: list[str], tree: Path,
-                  notes: list[str], unmeasured: list[str], unparsed: list[str],
-                  limits: dict[str, int]) -> list[Function]:
+                  into: Measurement, limits: dict[str, int]) -> list[Function]:
     config_dir, config, label = group_config(root, head, config_path)
     measured, enforced, plugin_paths, config_notes = measure_config(config, limits)
-    notes += [f"{label}: {note}" for note in config_notes]
+    into.notes += [f"{label}: {note}" for note in config_notes]
     plugin_dirs = [os.path.normpath(str(PurePosixPath(config_dir, p).parent)) for p in plugin_paths]
     materialize(root, head, group + plugin_dirs, tree)
     link_node_modules(root, tree, config_dir)
     oxlint = find_oxlint(root, root / config_dir)
     if oxlint is None:
-        notes.append(f"{label}: no oxlint in the repository or in this skill (run `pnpm install` in "
-                     f"{SKILL_DIR}); {len(group)} JS/TS file(s) not measured")
-        unmeasured += group
+        into.notes.append(f"{label}: no oxlint in the repository or in this skill (run `pnpm install` in "
+                          f"{SKILL_DIR}); {len(group)} JS/TS file(s) not measured")
+        into.unmeasured += group
         return []
     temp_config = tree / config_dir / ".pbp-measure.oxlintrc.json"
     temp_config.parent.mkdir(parents=True, exist_ok=True)
@@ -330,10 +328,10 @@ def measure_group(root: Path, head: str | None, config_path: str | None, group: 
     print(f"Config: {label} -> {len(group)} JS-family file(s); rules: "
           + ", ".join(sorted(set(measured["rules"]) | {n for o in measured["overrides"] for n in o["rules"]})))
     diagnostics = run_oxlint(root, oxlint, temp_config, [tree / p for p in group])
-    note_parse_failures(diagnostics, tree, label, notes, unparsed)
+    note_parse_failures(diagnostics, tree, label, into)
     found = collect(diagnostics, tree)
     tag_with_oxlint(found, enforced, root, oxlint, temp_config, tree)
-    note_unscored(group, found, label, notes)
+    note_unscored(group, found, label, into.notes)
     return list(found.values())
 
 

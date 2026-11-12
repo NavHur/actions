@@ -61,7 +61,7 @@ from pathlib import Path
 
 import godot_guard
 from measure_js import measure_js
-from measured_function import Function, pedro_limits
+from measured_function import LINT_UNCHECKED, Function, Measurement, pedro_limits
 from revision import (LANGUAGES, FileChanges, changed_files, diff_changes, git, github_owner, language_of, materialize,
                       read_file, run)
 
@@ -111,31 +111,32 @@ def record_python_limits(name: str, text: str, patterns: dict[str, str], limits:
 
 
 def measure_external(language: str, root: Path, head: str | None, files: list[str], tree: Path,
-                     notes: list[str], unmeasured: list[str], unparsed: list[str]) -> list[Function]:
+                     into: Measurement) -> list[Function]:
     command, missing = analyzer(language, root)
     if command is None:
-        notes.append(f"{LANGUAGE_NAMES[language]}: {missing}; {len(files)} file(s) not measured; {INSTALL}")
-        unmeasured += files
+        into.notes.append(f"{LANGUAGE_NAMES[language]}: {missing}; {len(files)} file(s) not measured; {INSTALL}")
+        into.unmeasured += files
         return []
     materialize(root, head, files, tree)
     result = run([*command, *[str(tree / f) for f in files]], tree)
     try:
         report = json.loads(result.stdout)
     except json.JSONDecodeError:
-        notes.append(f"{language}: analyzer failed ({result.stderr.strip()[:300]}); {len(files)} file(s) not measured")
-        unmeasured += files
+        into.notes.append(f"{language}: analyzer failed ({result.stderr.strip()[:300]}); "
+                          f"{len(files)} file(s) not measured")
+        into.unmeasured += files
         return []
-    print(f"Analyzer: {language} -> {len(files)} file(s) with {command[0]}")
-    return external_functions(report, tree, notes, unparsed)
+    into.analyzers.append(f"Analyzer: {language} -> {len(files)} file(s) with {command[0]}")
+    return external_functions(report, tree, into)
 
 
-def external_functions(report: dict, tree: Path, notes: list[str], unparsed: list[str]) -> list[Function]:
+def external_functions(report: dict, tree: Path, into: Measurement) -> list[Function]:
     functions = []
     for absolute, value in report.items():
         path = str(Path(absolute).relative_to(tree))
         if isinstance(value, dict):
-            notes.append(f"{path}: does not parse ({value.get('error')}); not measured")
-            unparsed.append(path)
+            into.notes.append(f"{path}: does not parse ({value.get('error')}); not measured")
+            into.unparsed.append(path)
             continue
         for item in value:
             functions.append(Function(path, item["name"], item["line"], item["end_line"],
@@ -146,10 +147,10 @@ def external_functions(report: dict, tree: Path, notes: list[str], unparsed: lis
 # Report
 
 
-def effective_limits(args, pedro: dict[str, int], root: Path, head: str | None, has_python: bool,
+def effective_limits(stricter: dict[str, int | None], pedro: dict[str, int], root: Path, head: str | None, has_python: bool,
                      notes: list[str], guard: godot_guard.Verdicts | None = None) -> dict[str, dict[str, int]]:
-    """Limits per language: Pedro's, tightened by flags and repository config."""
-    base = flag_limits(args, pedro, notes)
+    """Limits per language: Pedro's, tightened by the stricter limits a caller asks for and repository config."""
+    base = flag_limits(stricter, pedro, notes)
     limits = {language: dict(base) for language in LANGUAGES}
     if has_python:
         repo, repo_notes = repo_python_limits(root, head)
@@ -160,10 +161,10 @@ def effective_limits(args, pedro: dict[str, int], root: Path, head: str | None, 
     return limits
 
 
-def flag_limits(args: argparse.Namespace, pedro: dict[str, int], notes: list[str]) -> dict[str, int]:
+def flag_limits(stricter: dict[str, int | None], pedro: dict[str, int], notes: list[str]) -> dict[str, int]:
     base = dict(pedro)
     for metric in base:
-        value = getattr(args, f"{metric}_limit")
+        value = stricter.get(metric)
         if value is None:
             continue
         if value < base[metric]:
@@ -218,7 +219,7 @@ def print_result(changed: list[Function], files: list[str], by_language: dict[st
     tags = [f.lint_tag() for f in over]
     failing = sum(tag.startswith(" [lint:") for tag in tags)
     passing = tags.count(" [lint passes]")
-    unchecked = tags.count(" [not lint-checked]")
+    unchecked = tags.count(f" {LINT_UNCHECKED}")
     counts = ", ".join(f"{len(group)} {language}" for language, group in sorted(by_language.items()))
     print(f"Result: {len(over)} function{'s' if len(over) != 1 else ''} over threshold among {len(changed)} "
           f"changed functions in {len(files)} changed source files ({counts}): {failing} fail the repository's "
@@ -248,32 +249,43 @@ def arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def measure(root: Path, merge_base: str, head: str | None, files: list[str], stricter: dict[str, int | None],
+            pedro: dict[str, int]) -> Measurement:
+    """Score `files` between merge_base and head; `stricter` maps a metric to a limit tighter than Pedro's, or None."""
+    by_language = group_languages(files)
+    found = Measurement(by_language)
+    guard = godot_guard.check(root, head, by_language.get("gdscript", []), found.notes)
+    limits = effective_limits(stricter, pedro, root, head, "python" in by_language, found.notes, guard)
+    if not files:
+        return found
+    file_changes = diff_changes(root, merge_base, head, files)
+    measure_languages(root, head, by_language, limits, found, pedro)
+    tag_with_guard(found.functions, guard)
+    found.changed = [f for f in found.functions if is_changed(f, file_changes)]
+    return found
+
+
 def main() -> int:
     args = arguments()
     root = Path(git(Path(args.repo), "rev-parse", "--show-toplevel").strip())
     merge_base = comparison_base(root, args.base, args.head)
     files = changed_files(root, merge_base, args.head)
-    by_language = group_languages(files)
-    notes: list[str] = []
-    guard = godot_guard.check(root, args.head, by_language.get("gdscript", []), notes)
     owner = github_owner(root)
     pedro = pedro_limits(owner)
-    limits = effective_limits(args, pedro, root, args.head, "python" in by_language, notes, guard)
     print_header(root, args, merge_base, pedro, owner)
+    stricter = {"cognitive": args.cognitive_limit, "cyclomatic": args.cyclomatic_limit}
+    found = measure(root, merge_base, args.head, files, stricter, pedro)
+    for line in found.analyzers:
+        print(line)
     if not files:
         print("No changed source files.\nResult: 0 functions over threshold (nothing to measure).")
         return 0
-
-    file_changes = diff_changes(root, merge_base, args.head, files)
-    functions, unmeasured, unparsed = measure_languages(root, args.head, by_language, limits, notes, pedro)
-    tag_with_guard(functions, guard)
-    changed_functions = [f for f in functions if is_changed(f, file_changes)]
-    shown, unchanged = selected_functions(args, functions, changed_functions)
+    shown, unchanged = selected_functions(args, found.functions, found.changed)
     print_functions(shown, unchanged)
-    print_notes(notes)
+    print_notes(found.notes)
     print("\n'-' cognitive: score 0, or counted inside the enclosing function (nested functions).")
-    over = print_result(changed_functions, files, by_language, unmeasured, unparsed)
-    return 1 if args.check and (over or unmeasured) else 0
+    over = print_result(found.changed, files, found.by_language, found.unmeasured, found.unparsed)
+    return 1 if args.check and (over or found.unmeasured) else 0
 
 
 def comparison_base(root: Path, base: str, head: str | None) -> str:
@@ -304,22 +316,18 @@ def print_notes(notes: list[str]) -> None:
 
 
 def measure_languages(root: Path, head: str | None, by_language: dict[str, list[str]],
-                      limits: dict[str, dict[str, int]], notes: list[str],
-                      pedro: dict[str, int]) -> tuple[list[Function], list[str], list[str]]:
-    functions: list[Function] = []
-    unmeasured: list[str] = []
-    unparsed: list[str] = []
+                      limits: dict[str, dict[str, int]], into: Measurement,
+                      pedro: dict[str, int]) -> None:
     with tempfile.TemporaryDirectory(prefix="measure-complexity-") as tmp:
         tree = Path(tmp)
         for language, group in sorted(by_language.items()):
             if language == "js":
-                found = measure_js(root, head, group, tree, notes, unmeasured, unparsed, pedro)
+                measured = measure_js(root, head, group, tree, into, pedro)
             else:
-                found = measure_external(language, root, head, group, tree, notes, unmeasured, unparsed)
-            for function in found:
+                measured = measure_external(language, root, head, group, tree, into)
+            for function in measured:
                 function.limits = dict(limits[language])
-            functions += found
-    return functions, unmeasured, unparsed
+            into.functions += measured
 
 
 def is_changed(function: Function, file_changes: dict[str, FileChanges]) -> bool:
