@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 DEFAULT_LIMITS = {"cognitive": 8, "cyclomatic": 16}
 # NavHur-owned repositories get 6/18; every other owner (DCA work repos, PedroNavHur, the t3code fork) keeps 8/16.
 # Cyclomatic 18 (6 x 3) keeps a long flat switch or match legal while cognitive 6 catches nesting.
 OWNER_LIMITS = {"navhur": {"cognitive": 6, "cyclomatic": 18}}
+
+# The coverage tag (and note) for a function the repository's lint could not be consulted for.
+LINT_UNCHECKED = "[not lint-checked]"
 
 
 def pedro_limits(owner: str | None) -> dict[str, int]:
@@ -52,10 +56,23 @@ class Function:
     def over(self) -> list[str]:
         return [f"{metric} {self.score(metric)} > {limit}" for metric, limit in self.excess().items()]
 
-    def lint_tag(self) -> str:
+    def lint_tag(self, metrics: Iterable[str] | None = None) -> str:
+        """The lint tag of `metrics` (default: every metric over its limit)."""
         if self.lint is None:
-            return " [not lint-checked]"
-        severities = {self.lint[m][0] for m in self.excess() if m in self.lint}
+            return f" {LINT_UNCHECKED}"
+        severities = {self.lint[m][0] for m in (self.excess() if metrics is None else metrics) if m in self.lint}
         if "error" in severities:
             return " [lint: error]"
         return " [lint: warning]" if severities else " [lint passes]"
+
+
+@dataclass
+class Measurement:
+    """The changed source files of a range and the functions measured in them."""
+    by_language: dict[str, list[str]]
+    functions: list[Function] = field(default_factory=list)
+    changed: list[Function] = field(default_factory=list)
+    unmeasured: list[str] = field(default_factory=list)
+    unparsed: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    analyzers: list[str] = field(default_factory=list)

@@ -19,6 +19,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from measured_function import LINT_UNCHECKED
 from revision import materialize, read_file, run
 
 CONFIG = ".godot-guard.yml"
@@ -102,7 +103,7 @@ def usable(root: Path, notes: list[str]) -> str | None:
     else:
         found = f"godot-guard {version[0]}.{version[1]} at {binary}"
     notes.append(f"{CONFIG}: found {found}; tagging needs godot-guard 0.2+ (`check --json`), so its limits "
-                 "were not applied and GDScript stays [not lint-checked]")
+                 f"were not applied and GDScript stays {LINT_UNCHECKED}")
     return None
 
 
@@ -130,11 +131,11 @@ def ask(binary: str, cwd: Path, files: list[str], notes: list[str]) -> Verdicts 
         report = json.loads(result.stdout)
     except json.JSONDecodeError:
         notes.append(f"{binary} check --json failed (exit {result.returncode}: {result.stderr.strip()[:300]}); "
-                     "GDScript stays [not lint-checked]")
+                     f"GDScript stays {LINT_UNCHECKED}")
         return None
     if report.get("version") != FORMAT:
         notes.append(f"{binary} check --json reports format {report.get('version')!r}, not {FORMAT}; "
-                     "GDScript stays [not lint-checked]")
+                     f"GDScript stays {LINT_UNCHECKED}")
         return None
     problems: dict[tuple[str, str, int], str] = {}
     for problem in report["problems"]:
