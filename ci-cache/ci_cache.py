@@ -49,8 +49,9 @@ def entry_name(key):
 
 
 def head_tree():
-    return subprocess.run(["git", "rev-parse", "HEAD^{tree}"], check=True, capture_output=True,
-                          text=True).stdout.strip()
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"], check=True, capture_output=True, text=True
+    ).stdout.strip()
 
 
 def set_output(name, value):
@@ -100,8 +101,7 @@ def pinned_assets(tracked):
     files, so the union covers assets whose `.import` is ignored.
     """
     imports = [path for path in tracked if path.endswith(".import")]
-    skipped = tuple(path[: -len(".gdignore")] for path in tracked
-                    if path == ".gdignore" or path.endswith("/.gdignore"))
+    skipped = tuple(path[: -len(".gdignore")] for path in tracked if path == ".gdignore" or path.endswith("/.gdignore"))
     sources = (path[: -len(".import")] for path in imports)
     typed = {path for path in tracked if IMPORTED.search(path) and not path.startswith(skipped)}
     return set(imports) | {source for source in sources if Path(source).is_file()} | typed

@@ -53,3 +53,9 @@ pins in `complexity/binaries.json` are copies of NavHur/fleet's, written by its
 `lib/actions-copy/actions_copies.py`. Fleet's CI fails when they differ, so
 change them there and rewrite the copies here. `pbp-complexity` releases are
 mirrored here from fleet's, so public and private CI can download them.
+
+## Development
+
+`make format` (ruff format at 120 columns), `make lint` (ruff check), `make typecheck` (ty check) and `make test`
+(the four unittest suites; `complexity` and `checks` need `GH_TOKEN`) are the gate's steps, and CI runs them. The
+copies of fleet's code are left out of the formatter and of ty, so their findings are fixed in fleet.

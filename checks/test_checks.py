@@ -26,7 +26,6 @@ SIMPLE = "def simple():\n    return 1\n"
 
 
 class Action(unittest.TestCase):
-
     def setUp(self):
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)

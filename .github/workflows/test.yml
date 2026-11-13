@@ -14,14 +14,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python3 -m unittest discover -s file-size -p "test_*.py"
-      - run: python3 -m unittest discover -s ci-cache -p "test_*.py"
-      # Runs the action in a scratch repository; this repository's own diff is mostly copies of fleet code.
-      - run: python3 -m unittest discover -s complexity -p "test_*.py"
-        env:
-          GH_TOKEN: ${{ github.token }}
-      # Both checks in one run: the second still runs when the first fails, and either failure fails it.
-      - run: python3 -m unittest discover -s checks -p "test_*.py"
+      # The versions fleet pins in binaries.json (ruff) and the ~/.local/bin/ty the gate uses.
+      - run: python3 -m pip install ruff==0.17.3 ty==0.0.94
+      - run: ruff format --check .
+      - run: make lint
+      - run: make typecheck
+      # complexity and checks run the actions in a scratch repository, which needs the token.
+      - run: make test
         env:
           GH_TOKEN: ${{ github.token }}
       - uses: ./file-size

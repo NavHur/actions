@@ -37,7 +37,6 @@ export function nested(a, b, c) {
 
 
 class Action(unittest.TestCase):
-
     def setUp(self):
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)

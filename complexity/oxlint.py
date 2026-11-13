@@ -35,8 +35,12 @@ BINDINGS = {("Linux", "x86_64"): "@oxlint/binding-linux-x64-gnu", ("Darwin", "ar
 
 def integrity(lockfile: str, package: str, version: str) -> str:
     """The sha512 digest the lockfile records for package@version, as base64."""
-    match = re.search(rf"^  '?{re.escape(package)}@{re.escape(version)}'?:\n    resolution: "
-                      r"\{integrity: sha512-([A-Za-z0-9+/=]+)\}", lockfile, re.MULTILINE)
+    match = re.search(
+        rf"^  '?{re.escape(package)}@{re.escape(version)}'?:\n    resolution: "
+        r"\{integrity: sha512-([A-Za-z0-9+/=]+)\}",
+        lockfile,
+        re.MULTILINE,
+    )
     if match is None:
         sys.exit(f"oxlint.py: pnpm-lock.yaml has no sha512 integrity for {package}@{version}")
     return match.group(1)
