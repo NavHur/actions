@@ -1,0 +1,4 @@
+[src]
+# Copies of NavHur/fleet's code (see README): a fix made here is overwritten by the next copy, so
+# the findings in them belong in fleet.
+exclude = ["file-size/file_size.py", "complexity/binaries.py", "complexity/skill/"]

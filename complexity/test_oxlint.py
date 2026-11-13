@@ -14,6 +14,7 @@ import tarfile
 import tempfile
 import unittest
 import urllib.error
+from email.message import Message
 from pathlib import Path
 from unittest import mock
 
@@ -162,7 +163,7 @@ class Install(unittest.TestCase):
         return sleep
 
     def http_error(self, code: int):
-        return urllib.error.HTTPError(oxlint.tarball_url("oxlint", VERSION), code, "status", None, None)
+        return urllib.error.HTTPError(oxlint.tarball_url("oxlint", VERSION), code, "status", Message(), None)
 
     def test_retries_a_transient_failure(self):
         for failure in [urllib.error.URLError("reset"), self.http_error(503), TimeoutError("slow"),
