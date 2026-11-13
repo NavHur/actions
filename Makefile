@@ -1,5 +1,8 @@
 # The gate's steps, run by fleet's pre-commit skill. CI runs the same ones.
-.PHONY: lint typecheck test
+.PHONY: format lint typecheck test
+
+format:
+	ruff format .
 
 lint:
 	ruff check .

@@ -1,10 +1,14 @@
-# Lint only (`make lint`): pyflakes and syntax errors. Python here has no
-# formatter, so leave layout alone. Every Mac script runs on its stock
-# /usr/bin/python3 (3.9), so syntax newer than that is an error.
+# `make lint` checks pyflakes and syntax errors; `make format` runs ruff format at the width the code is
+# written to. Every Mac script runs on its stock /usr/bin/python3 (3.9), so syntax newer than that is an error.
 target-version = "py39"
+line-length = 120
 # Extensionless Python entry points.
 extend-include = ["bin/actions-runners", "bin/bg-job", "bin/host-check", "bin/idle-compact",
                  "bin/preview-worktree"]
+
+[format]
+# Copies of NavHur/fleet's code (see README): fleet's CI fails when they differ from its own.
+exclude = ["file-size/file_size.py", "complexity/binaries.py", "complexity/skill/**"]
 
 [lint]
 select = ["F", "E9", "FA"]
