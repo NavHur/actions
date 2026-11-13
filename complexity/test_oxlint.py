@@ -53,11 +53,11 @@ def fake_urlopen(served: dict[str, bytes]):
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = served[url]
         return response
+
     return urlopen
 
 
 class Install(unittest.TestCase):
-
     def setUp(self):
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
@@ -153,12 +153,12 @@ class Install(unittest.TestCase):
                 if pending:
                     raise pending.pop(0)
             return served(url, timeout)
+
         return urlopen
 
     def install_with(self, failures: list):
         urlopen = self.flaky_urlopen(failures)
-        with mock.patch("oxlint.urllib.request.urlopen", new=urlopen), \
-                mock.patch("oxlint.time.sleep") as sleep:
+        with mock.patch("oxlint.urllib.request.urlopen", new=urlopen), mock.patch("oxlint.time.sleep") as sleep:
             oxlint.main(self.skill)
         return sleep
 
@@ -166,8 +166,12 @@ class Install(unittest.TestCase):
         return urllib.error.HTTPError(oxlint.tarball_url("oxlint", VERSION), code, "status", Message(), None)
 
     def test_retries_a_transient_failure(self):
-        for failure in [urllib.error.URLError("reset"), self.http_error(503), TimeoutError("slow"),
-                        http.client.IncompleteRead(b"par")]:
+        for failure in [
+            urllib.error.URLError("reset"),
+            self.http_error(503),
+            TimeoutError("slow"),
+            http.client.IncompleteRead(b"par"),
+        ]:
             with self.subTest(failure=type(failure).__name__):
                 self.install_with([failure])
                 self.assertEqual(self.calls, 2)

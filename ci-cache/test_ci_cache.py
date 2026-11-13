@@ -23,8 +23,14 @@ class Checkout:
         self.git("init", "-q", "-b", "main")
         self.git("config", "user.email", "test@example.com")
         self.git("config", "user.name", "Test")
-        self.commit({"project.godot": "config_version=5\n", "art/hero.png": "png",
-                     "art/hero.png.import": "[remap]\n", "main.gd": "extends Node\n"})
+        self.commit(
+            {
+                "project.godot": "config_version=5\n",
+                "art/hero.png": "png",
+                "art/hero.png.import": "[remap]\n",
+                "main.gd": "extends Node\n",
+            }
+        )
 
     def git(self, *args):
         subprocess.run(["git", *args], cwd=self.path, check=True, capture_output=True)
@@ -40,14 +46,24 @@ class Checkout:
         (self.path / ".godot").mkdir(exist_ok=True)
 
     def run_raw(self, *args):
-        return subprocess.run([sys.executable, str(ROOT / "ci_cache.py"), *args], cwd=self.path,
-                              capture_output=True, text=True, env=self.env)
+        return subprocess.run(
+            [sys.executable, str(ROOT / "ci_cache.py"), *args],
+            cwd=self.path,
+            capture_output=True,
+            text=True,
+            env=self.env,
+        )
 
     def run(self, *args):
         """The command's outputs as a dict, read from the GITHUB_OUTPUT file it appended to."""
         with tempfile.NamedTemporaryFile("r") as output:
-            subprocess.run([sys.executable, str(ROOT / "ci_cache.py"), *args], cwd=self.path, check=True,
-                           capture_output=True, env=dict(self.env, GITHUB_OUTPUT=output.name))
+            subprocess.run(
+                [sys.executable, str(ROOT / "ci_cache.py"), *args],
+                cwd=self.path,
+                check=True,
+                capture_output=True,
+                env=dict(self.env, GITHUB_OUTPUT=output.name),
+            )
             return dict(line.rstrip("\n").split("=", 1) for line in output)
 
 
@@ -162,8 +178,11 @@ class CiCacheTest(unittest.TestCase):
     def test_save_keeps_exactly_the_last_three_saves(self):
         self.save_entries(5)
         self.assertEqual(self.entries(), sorted(self.state_entry(f"key-{version}") for version in (2, 3, 4)))
-        leftovers = [path for path in self.state_entry("key-0").parent.iterdir()
-                     if path.name.startswith((".trash-", ".staging-"))]
+        leftovers = [
+            path
+            for path in self.state_entry("key-0").parent.iterdir()
+            if path.name.startswith((".trash-", ".staging-"))
+        ]
         self.assertEqual(leftovers, [])
 
     def test_save_reclaims_only_staging_copies_older_than_an_hour(self):
@@ -219,8 +238,10 @@ class CiCacheTest(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.repo.path)
         try:
-            with mock.patch.dict(os.environ, self.repo.env), \
-                    mock.patch.object(ci_cache.tempfile, "mkdtemp", concurrent_save_lands_first):
+            with (
+                mock.patch.dict(os.environ, self.repo.env),
+                mock.patch.object(ci_cache.tempfile, "mkdtemp", concurrent_save_lands_first),
+            ):
                 ci_cache.main(["godot-save", "key"])
         finally:
             os.chdir(cwd)
